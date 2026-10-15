@@ -1,0 +1,419 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  DEALER
+  WAREHOUSE
+  DELIVERY_INSTALLER
+  ACCOUNTANT
+}
+
+enum BunkerPosition {
+  LEFT
+  RIGHT
+}
+
+enum OrderStatus {
+  NEW
+  CONFIRMED
+  PREPARING
+  READY
+  ASSIGNED
+  DELIVERING
+  DELIVERED
+  INSTALLING
+  COMPLETED
+  CANCELLED
+}
+
+enum MovementType {
+  IN
+  OUT
+  RESERVE
+  RELEASE
+  ADJUSTMENT
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  OTHER
+}
+
+enum LedgerType {
+  ORDER_CHARGE
+  PAYMENT
+  CORRECTION
+  CANCELLATION
+}
+
+enum ExpenseCategory {
+  DELIVERY
+  FUEL
+  INSTALLATION
+  MATERIAL
+  SALARY
+  OTHER
+}
+
+enum ProductionStatus {
+  PENDING
+  IN_PROGRESS
+  FINISHED
+  CANCELLED
+}
+
+model User {
+  id            String               @id @default(uuid()) @db.Uuid
+  name          String
+  phone         String               @unique
+  passwordHash  String
+  role          Role
+  active        Boolean              @default(true)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  dealer        Dealer?
+  sessions      RefreshSession[]
+  customers     Customer[]
+  orders        Order[]
+  movements     StockMovement[]
+  statuses      OrderStatusHistory[]
+  productions   Production[]
+  deliveries    Delivery[]
+  installations Installation[]
+  payments      Payment[]
+  ledger        DealerTransaction[]
+  expenses      Expense[]
+  notifications Notification[]
+  audits        AuditLog[]
+}
+
+model RefreshSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, expiresAt])
+}
+
+model Dealer {
+  id           String              @id @default(uuid()) @db.Uuid
+  userId       String              @unique @db.Uuid
+  companyName  String?
+  user         User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  orders       Order[]
+  customers    Customer[]
+  transactions DealerTransaction[]
+  createdAt    DateTime            @default(now())
+}
+
+model Customer {
+  id             String   @id @default(uuid()) @db.Uuid
+  firstName      String
+  lastName       String
+  phone          String
+  secondaryPhone String?
+  region         String
+  district       String
+  address        String
+  landmark       String?
+  note           String?
+  dealerId       String?  @db.Uuid
+  createdById    String   @db.Uuid
+  dealer         Dealer?  @relation(fields: [dealerId], references: [id], onDelete: Restrict)
+  createdBy      User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  orders         Order[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([dealerId, createdAt])
+  @@index([phone])
+}
+
+model Category {
+  id       String    @id @default(uuid()) @db.Uuid
+  name     String    @unique
+  products Product[]
+}
+
+model Product {
+  id          String      @id @default(uuid()) @db.Uuid
+  name        String
+  model       String      @unique
+  categoryId  String      @db.Uuid
+  powerKw     Int
+  costPrice   Decimal     @db.Decimal(18, 2)
+  dealerPrice Decimal     @db.Decimal(18, 2)
+  salePrice   Decimal     @db.Decimal(18, 2)
+  imageUrl    String?
+  note        String?
+  active      Boolean     @default(true)
+  category    Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  inventory   Inventory[]
+  items       OrderItem[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([categoryId, active])
+}
+
+model Warehouse {
+  id        String      @id @default(uuid()) @db.Uuid
+  name      String      @unique
+  address   String
+  active    Boolean     @default(true)
+  inventory Inventory[]
+  orders    Order[]
+}
+
+model Inventory {
+  id                String          @id @default(uuid()) @db.Uuid
+  warehouseId       String          @db.Uuid
+  productId         String          @db.Uuid
+  quantity          Int             @default(0)
+  reservedQuantity  Int             @default(0)
+  lowStockThreshold Int             @default(5)
+  version           Int             @default(0)
+  warehouse         Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  product           Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  movements         StockMovement[]
+  updatedAt         DateTime        @updatedAt
+
+  // availableQuantity is returned as quantity - reservedQuantity; never stored separately.
+  @@unique([warehouseId, productId])
+}
+
+model StockMovement {
+  id          String       @id @default(uuid()) @db.Uuid
+  inventoryId String       @db.Uuid
+  orderId     String?      @db.Uuid
+  type        MovementType
+  quantity    Int
+  reason      String
+  createdById String       @db.Uuid
+  inventory   Inventory    @relation(fields: [inventoryId], references: [id], onDelete: Restrict)
+  order       Order?       @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  createdBy   User         @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime     @default(now())
+
+  @@index([inventoryId, createdAt])
+  @@index([orderId])
+}
+
+model Order {
+  id                 String               @id @default(uuid()) @db.Uuid
+  number             Int                  @unique @default(autoincrement())
+  customerId         String               @db.Uuid
+  dealerId           String               @db.Uuid
+  warehouseId        String               @db.Uuid
+  createdById        String               @db.Uuid
+  status             OrderStatus          @default(NEW)
+  address            String
+  phone              String
+  deliveryPrice      Decimal              @default(0) @db.Decimal(18, 2)
+  installationPrice  Decimal              @default(0) @db.Decimal(18, 2)
+  discount           Decimal              @default(0) @db.Decimal(18, 2)
+  totalAmount        Decimal              @db.Decimal(18, 2)
+  companyAmount      Decimal              @db.Decimal(18, 2)
+  note               String?
+  cancellationReason String?
+  cancellationNote   String?
+  bunkerPosition     BunkerPosition?
+  controlPanel       String?
+  accessories        String[]             @default([])
+  version            Int                  @default(0)
+  customer           Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  dealer             Dealer               @relation(fields: [dealerId], references: [id], onDelete: Restrict)
+  warehouse          Warehouse            @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  createdBy          User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  items              OrderItem[]
+  statusHistory      OrderStatusHistory[]
+  movements          StockMovement[]
+  production         Production?
+  delivery           Delivery?
+  installation       Installation?
+  payments           Payment[]
+  transactions       DealerTransaction[]
+  expenses           Expense[]
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@index([dealerId, createdAt])
+  @@index([status, createdAt])
+  @@index([customerId])
+}
+
+model OrderItem {
+  id          String  @id @default(uuid()) @db.Uuid
+  orderId     String  @db.Uuid
+  productId   String  @db.Uuid
+  productName String
+  model       String
+  boilerType  String?
+  powerKw     Int?
+  quantity    Int
+  costPrice   Decimal @db.Decimal(18, 2)
+  dealerPrice Decimal @db.Decimal(18, 2)
+  salePrice   Decimal @db.Decimal(18, 2)
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product     Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, productId])
+}
+
+model OrderStatusHistory {
+  id          String       @id @default(uuid()) @db.Uuid
+  orderId     String       @db.Uuid
+  fromStatus  OrderStatus?
+  toStatus    OrderStatus
+  changedById String       @db.Uuid
+  note        String?
+  createdAt   DateTime     @default(now())
+  order       Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  changedBy   User         @relation(fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+}
+
+model Production {
+  id           String           @id @default(uuid()) @db.Uuid
+  orderId      String           @unique @db.Uuid
+  assignedToId String           @db.Uuid
+  status       ProductionStatus @default(PENDING)
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  note         String?
+  order        Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  assignedTo   User             @relation(fields: [assignedToId], references: [id], onDelete: Restrict)
+}
+
+model Delivery {
+  id           String    @id @default(uuid()) @db.Uuid
+  orderId      String    @unique @db.Uuid
+  assignedToId String    @db.Uuid
+  scheduledAt  DateTime
+  deliveredAt  DateTime?
+  address      String
+  phone        String
+  note         String?
+  order        Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  assignedTo   User      @relation(fields: [assignedToId], references: [id], onDelete: Restrict)
+
+  @@index([assignedToId, scheduledAt])
+}
+
+model Installation {
+  id           String       @id @default(uuid()) @db.Uuid
+  orderId      String       @unique @db.Uuid
+  assignedToId String       @db.Uuid
+  startedAt    DateTime?
+  completedAt  DateTime?
+  note         String?
+  issue        String?
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  assignedTo   User         @relation(fields: [assignedToId], references: [id], onDelete: Restrict)
+  attachments  Attachment[]
+}
+
+model Attachment {
+  id             String       @id @default(uuid()) @db.Uuid
+  installationId String       @db.Uuid
+  storageKey     String       @unique
+  fileName       String
+  mimeType       String
+  size           Int
+  createdAt      DateTime     @default(now())
+  installation   Installation @relation(fields: [installationId], references: [id], onDelete: Restrict)
+}
+
+model Payment {
+  id             String              @id @default(uuid()) @db.Uuid
+  orderId        String              @db.Uuid
+  amount         Decimal             @db.Decimal(18, 2)
+  method         PaymentMethod
+  receivedById   String              @db.Uuid
+  paidAt         DateTime            @default(now())
+  note           String?
+  idempotencyKey String              @unique
+  order          Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  receivedBy     User                @relation(fields: [receivedById], references: [id], onDelete: Restrict)
+  transactions   DealerTransaction[]
+  createdAt      DateTime            @default(now())
+
+  @@index([orderId, paidAt])
+}
+
+model DealerTransaction {
+  id          String     @id @default(uuid()) @db.Uuid
+  dealerId    String     @db.Uuid
+  orderId     String?    @db.Uuid
+  paymentId   String?    @db.Uuid
+  type        LedgerType
+  amount      Decimal    @db.Decimal(18, 2)
+  reason      String
+  createdById String     @db.Uuid
+  reference   String     @unique
+  dealer      Dealer     @relation(fields: [dealerId], references: [id], onDelete: Restrict)
+  order       Order?     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  payment     Payment?   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  createdBy   User       @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime   @default(now())
+
+  @@index([dealerId, createdAt])
+  @@index([orderId])
+}
+
+model Expense {
+  id          String          @id @default(uuid()) @db.Uuid
+  orderId     String?         @db.Uuid
+  category    ExpenseCategory
+  amount      Decimal         @db.Decimal(18, 2)
+  note        String
+  createdById String          @db.Uuid
+  spentAt     DateTime        @default(now())
+  order       Order?          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  createdBy   User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([spentAt, category])
+}
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  type      String
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, readAt, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  action     String
+  entityType String
+  entityId   String
+  oldValue   Json?
+  newValue   Json?
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([userId, createdAt])
+}

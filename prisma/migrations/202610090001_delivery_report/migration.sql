@@ -1,0 +1,4 @@
+ALTER TABLE "Order" ADD COLUMN "controlPanel" TEXT,
+ADD COLUMN "accessories" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+ALTER TABLE "OrderItem" ADD COLUMN "boilerType" TEXT,
+ADD COLUMN "powerKw" INTEGER;
